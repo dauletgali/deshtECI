@@ -7,7 +7,8 @@
 
 import econci
 import pandas as pd
-
+import numpy as np
+import networkx as nx
 class deshtEci(econci.Complexity):
 
     def __init__(self, df: pd.DataFrame, c: str, p: str, values: str, m_cp_thresh: float = 1, manual:bool=False):
@@ -29,19 +30,92 @@ class deshtEci(econci.Complexity):
             self._m_cp = m_cp
             self._m = m_cp
     
+    def _calc_average_proximity(self):
+        """
+        Calculate proxoimity based on average of two baskets
+        """
+        kp0 = self._ubiquity
+        phi = self._m_cp.T.dot(self._m_cp)
+        #phi_pp = phi.apply(lambda x : x / np.mean(kp0.loc[x.name] , kp0.loc[x.index]))
+        phi_pp = phi.apply(lambda x: x / ((kp0.loc[x.name] + kp0.loc[x.index]) / 2 ) )
+        np.fill_diagonal(phi_pp.values , 0)
+        self._average_proximity = phi_pp
+    
+    def _calc_average_distance(self):
+        """
+        Calculate traditional distance (0 is bad , 1 is good distance NOT PROBABILITY)
+        to calculate probability you need to substract this value from 1
+        """
+        density = self._m_cp.dot(self._average_proximity) / self._average_proximity.sum(axis=1)
+        self._average_distance = 1 - density
+
+    def _calc_max_prox(self):
+        m_cp = self._m_cp.copy()
+        m_cp = m_cp.unstack().rename_axis([self._p, self._c]).reset_index(name='m_cp')
+        average_proximity = self._average_proximity.copy()
+        average_proximity = average_proximity.unstack().rename_axis(['product_1', 'product_2']).reset_index(name='averageBasket_proximity')
+        specialization_table = m_cp[m_cp['m_cp'] == 1].groupby(self._p)[self._c].apply(list).reset_index(name='c_list')
+        average_proximity = average_proximity.merge(specialization_table, left_on='product_1', right_on=self._p, how='left', validate='m:1')
+        max_prox = average_proximity.explode('c_list').groupby(['c_list', 'product_2'], as_index=False)['averageBasket_proximity'].max()
+        max_prox = max_prox.rename(columns={'c_list': self._c, 'product_2' : self._p , 'averageBasket_proximity': 'maxProx'})
+        self._max_prox = max_prox
+
+    def getMaxProxAndDistance(self, m_cp:pd.DataFrame, average_proximity:pd.DataFrame):
+        specialization_table = m_cp[m_cp['m_cp'] == 1].groupby(self._p)[self._c].apply(list).reset_index(name='c_list')
+        average_proximity = average_proximity.merge(specialization_table, left_on='product_1', right_on=self._p, how='left', validate='m:1')
+        max_prox = average_proximity.explode('c_list').groupby(['c_list', 'product_2'], as_index=False)['averageBasket_proximity'].max()
+        max_prox = max_prox.rename(columns={'c_list': self._c, 'product_2' : self._p , 'averageBasket_proximity': 'maxProx'})
+        max_prox
+        return max_prox
+
     def calculate_indexes(self):
         if self.manual == True:
             self._get_diversity()
             self._get_ubiquity()
             self._calc_eci()
             self._calc_pci()
+            self._calc_average_proximity()
+            self._calc_average_distance()
+            self._calc_max_prox()
             self._calc_proximity()
             self._calc_density()
             self._calc_distance()
         else:
             super().calculate_indexes()
+    
 
+    @property
+    def average_proximity(self):
+        return self._average_proximity
+    
 
+    @property
+    def average_proximity_long(self):
+        return self._average_proximity.unstack().rename_axis(['product_1', 'product_2']).reset_index(name='averageBasket_proximity')
+    
+
+    @property
+    def average_proximity_no_duplicates(self):
+        f_table = self._average_proximity.unstack().rename_axis(['product_1', 'product_2']).reset_index(name='averageBasket_proximity')
+        network = nx.from_pandas_edgelist(f_table, source='product_1', target='product_2' , edge_attr=True)
+        return nx.to_pandas_edgelist(network)
+    
+
+    @property
+    def average_distance(self):
+        return self._average_distance
+
+    @property
+    def max_prox(self):
+        return self._max_prox
+    
+    @property
+    def result_table(self):
+        m_cp = self._m_cp.unstack().reset_index(name='m_cp')
+        distance = self._average_distance.unstack().reset_index(name='averageDistance')
+        max_prox = self._max_prox
+        results = pd.merge(m_cp, distance, on=[self._p , self._c] , how='inner', validate='1:1').merge(max_prox , on=[self._p , self._c], how='inner', validate='1:1')
+        return results
 
 
 #data = pd.read_csv('res.csv')

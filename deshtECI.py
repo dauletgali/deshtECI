@@ -50,6 +50,10 @@ class deshtEci(econci.Complexity):
         self._average_distance = 1 - density
 
     def _calc_max_prox(self):
+        """
+        Gets maximum proximity to a product given the basket of products that country currently exports (i.e. m_cp = 1). 
+        For example, for combination Country A - Product 1 maximum proximity will be proximity table of Product 1 with products where Country A has m_cp=1. 
+        """
         m_cp = self._m_cp.copy()
         m_cp = m_cp.unstack().rename_axis([self._p, self._c]).reset_index(name='m_cp')
         average_proximity = self._average_proximity.copy()
@@ -65,8 +69,11 @@ class deshtEci(econci.Complexity):
         average_proximity = average_proximity.merge(specialization_table, left_on='product_1', right_on=self._p, how='left', validate='m:1')
         max_prox = average_proximity.explode('c_list').groupby(['c_list', 'product_2'], as_index=False)['averageBasket_proximity'].max()
         max_prox = max_prox.rename(columns={'c_list': self._c, 'product_2' : self._p , 'averageBasket_proximity': 'maxProx'})
-        max_prox
-        return max_prox
+        wide_prox = average_proximity.pivot(index='product_1', columns='product_2', values='averageBasket_proximity')
+        distance = m_cp.pivot(index=self._c , columns=self._p, values='m_cp').dot(wide_prox) / wide_prox.sum(axis=1)
+        distance = 1 - distance
+        distance = distance.unstack().reset_index(name='averageProxDistance')
+        return max_prox , distance
 
     def calculate_indexes(self):
         if self.manual == True:
@@ -92,6 +99,11 @@ class deshtEci(econci.Complexity):
     @property
     def average_proximity_long(self):
         return self._average_proximity.unstack().rename_axis(['product_1', 'product_2']).reset_index(name='averageBasket_proximity')
+    
+
+    @property
+    def m_cp_long(self):
+        return self._m_cp.unstack().reset_index(name='m_cp')
     
 
     @property
